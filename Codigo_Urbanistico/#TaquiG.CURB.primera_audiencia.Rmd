@@ -1,0 +1,595 @@
+---
+title: '#TaquiGraficos'
+author: "Manuel Zapico y Sofia Santamarina"
+date: "21 de agosto de 2019"
+output: html_document
+---
+
+# Taquigráficos. Primera audiencia del Código Urbanístico
+
+#Cargar librerias
+
+```{r}
+library(tidyverse)
+library(tidytext)
+```
+
+
+#Cargar los datos 
+```{r}
+
+setwd("C:/Users/Manuel/Desktop/taquigraficos")
+
+taqui_urbanistico <- readxl::read_excel("Taquigrafica Codigo Urbanistico.xlsx")
+
+#Le agregamos un dataset que ya teniamos con datos de legislador y bloque. La ventaja de tenerlo aparte en que podemos usarlo en otro momento. Solo lo uni
+
+ID_LEGISLADOR <- readxl::read_excel("ID LEGISLADOR.xlsx")
+ID_BLOQUE <- readxl::read_excel("ID BLOQUE.xlsx")
+
+taqui_urbanistico <- left_join (taqui_urbanistico, ID_LEGISLADOR)
+taqui_urbanistico <- left_join (taqui_urbanistico, ID_BLOQUE)
+```
+
+#Tokenizar y elimina stopwords 
+```{r}
+
+#Tokenizamos los discursos
+
+discurso <- separate_rows(taqui_urbanistico, Declaracion, sep = " ")
+
+discurso <- discurso %>%
+    mutate(linea = row_number())
+
+discurso_tokenizado <- discurso %>%
+    unnest_tokens(word, Declaracion)
+
+#cargar el stopwords para el código urbanístico. 
+
+stopwords_es <- read.csv2("stopwords.csv", encoding = "UTF-08")
+
+#Hacemos un antijoin: las palabras que coincidan, serán removidas.
+
+discurso_tokenizado <- discurso_tokenizado %>%
+   anti_join(stopwords_es, by = c("word" = "sw_urbanistico"))
+   
+
+```
+
+#Empezamos!
+
+En primer lugar, realizamos gráficos que reflejen un __conteo__ de las palabras más utilizadas, ya sea en _total_ o por cada _bloque_ o _legislador_. 
+
+
+##Nube de palabras 
+
+Veamos una nube de palabras parar tener una primera vizualización de las palabras usadas durante la sesión del Código Urbanístico. 
+
+```{r}
+library(wordcloud2)
+
+palabras <- select(discurso_tokenizado, word)
+
+palabra <- palabras %>%
+    group_by(word) %>%
+    count(word, sort = TRUE)
+    
+wordcloud2(palabra, size=0.5)
+```
+
+##Palabras por bloque 
+
+Una vez hecho esto, nos interesa conocer las palabras según cada _bloque_. Para eso realizamos un gráfico de barra que divida la cantidad por la exposición de cada partido en la sesión. 
+
+```{r}
+
+#Armamos un dataset contando palabras 
+
+discurso_palabras<- discurso_tokenizado %>% 
+                    select(word) %>%
+                    count(word) 
+
+#Unimos con el dataset tokenizado
+discurso_tokenizado <- left_join(discurso_tokenizado, discurso_palabras)
+
+#Calculamos el total de palabras por legislador y por bloque para normalizar el peso de cada palabra. La clave del próximo comando es el group_by
+
+total_palabras_legis <- discurso_tokenizado %>%
+  group_by(Bloque, Legislador) %>%
+  summarise(total_palabras_legislador=n()) %>% 
+  mutate(total_palabras_bloque = sum(total_palabras_legislador))
+
+#hacemos join del tokenizado con el total de palabras por legislador y por bloque
+
+discurso_tokenizado <- discurso_tokenizado %>%  left_join(total_palabras_legis)
+
+
+#Palabra más repetida por Bloque
+ 
+### QUITAMOS PALABRAS QUE EN REALIDAD SON NUMEROS
+
+discurso_tokenizado <- discurso_tokenizado %>%
+  filter(is.na(as.numeric(word)))
+
+#Antes de graficar, normalizamos la palabras por bloque! Esto es para sacar el porcentajes que ocupan las palabras según la extensión de cada discurso y, de ese modo, hacer comparables los resultados para cada Bloque. Luego, elegimos las 2 palabras más repetidas por Bloque. 
+
+disc_normalizado <- discurso_tokenizado %>% 
+    group_by(Bloque, word) %>%  
+    summarise(n = n()) %>% 
+    mutate(bloque_normaliz = round(n/sum(n) * 100, 1)) %>% 
+    top_n(2, n) 
+    
+#¿Cómo queda el dataset?
+
+View(disc_normalizado)    
+
+#Ahora sí, a graficar! Utilizamos el paquete ggplot2
+
+ggplot(disc_normalizado) +
+    geom_bar(aes(x = word, weight = bloque_normaliz, fill = word), show.legend = FALSE) +
+    coord_flip() +
+    facet_wrap(~Bloque) +
+    labs(title = "Discursos durante la sesión del Código Urbanístico",
+         subtitle = "Las palabras más frecuente por Bloque",
+         x = "palabras",
+         y = "cantidad",
+         fill = "palabra")
+
+
+```
+
+#Heatmap por legislador 
+
+Con esta visualización, hacemos un __conteo__ de acuerdo a lo dicho por cada __Legislador/a__
+
+```{r}
+
+discursos_legis <- discurso_tokenizado %>% select(Legislador, Bloque, word)
+
+#acomodamos los nombres de les legisladores para una mejor visualizaciÃ³n
+
+discursos_legis <- discursos_legis %>%  
+mutate(Legislador = sub("Muiños, María Rosa", "Muiños (BP)", Legislador )) %>% 
+mutate(Legislador = sub("Vilardo, Fernando Pablo", "Vilardo (AyL)", Legislador )) %>% 
+mutate(Legislador = sub("Solano, Gabriel", "Solano (FIT)", Legislador)) %>% 
+mutate(Legislador = sub("Roldán Méndez, Victoria Inés", "Roldán Méndez(VJ)", Legislador)) %>% 
+mutate(Legislador = sub("Abrevaya, Sergio", "Abrevaya (GEN)", Legislador)) %>% 
+mutate(Legislador = sub("Cortina, Roy", "Cortina (PS)", Legislador))%>% 
+mutate(Legislador = sub("Andrade, Javier", "Andrade (UC)", Legislador))%>% 
+mutate(Legislador = sub("Forchieri, Agustín", "Forchieri (VJ)", Legislador))%>% 
+mutate(Legislador = sub("Nosiglia, Juan Francisco", "Nosiglia (EVO)", Legislador)) 
+
+
+#seleccionamos las 10 palabras mÃ¡s repetidas 
+
+top_10_discurso <- discursos_legis %>%  
+  select(word) %>% 
+  count(word) %>% 
+  top_n(10,n) %>% 
+  arrange(desc(n))
+
+top_10_discurso
+
+#Unimos el dataset por legislador con el dataset de top_10
+
+discursos_legis <- left_join(top_10_discurso, discursos_legis) %>% 
+                        select(Legislador, word, n) %>% 
+                      group_by(Legislador) 
+
+heatmap <- discursos_legis %>% 
+            group_by(Legislador) %>% 
+            count(word)
+                    
+
+#Abrimos el dataset con un "spread", despuÃ©s le damos colores al heatmap
+
+heatmap <- heatmap %>%
+    spread(key=word, value=n)
+
+my_palette <- colorRampPalette(c("yellow", "firebrick2"))(n = 20)
+
+# reemplazamos los NA por cero para que no aparezca blanco el espacio en el mapa
+
+heatmap[is.na(heatmap)] <- 0
+
+
+# Default Heatmap (left)
+
+heatmap_data=as.matrix(heatmap[, -1])
+
+head(heatmap_data)
+
+heatmap(heatmap_data)
+
+m2 <- as.matrix(heatmap_data)
+rownames(m2) <- heatmap$Legislador
+heatmap(m2, col = my_palette) 
+```
+
+
+#DIAGRAMA DE CUERDAS 
+
+Para distribuir los resultados del conteo de palabras según cada Bloque, nos parece adecuado usar un __diagrama de cuerdas__.
+
+```{r}
+
+library(circlize)
+
+# Dataset de las top5 palabras por Bloque
+
+palabra_5 <- head(palabra, 5)
+
+discurso_bloque <- select(discurso_tokenizado, word, Bloque)
+
+discurso_bloque <- left_join(palabra_5, discurso_bloque) %>%
+                        select(word,Bloque) %>%
+                      group_by(Bloque)
+
+discurso_circulo <- discurso_bloque %>%
+                    count(word) %>%
+                    group_by(Bloque)
+
+discurso_circulo2 <- discurso_bloque %>%
+                    count(word) %>%
+                    group_by(word)
+
+#Cambiamos nombre de los Bloques para que sean mÃ¡s cortos
+
+discurso_circulo2 <- discurso_circulo2 %>%
+                      mutate(Bloque = sub("Autodeterminación y Libertad", "AyL", Bloque)) %>%
+                      mutate(Bloque= sub("Bloque Peronista", "BP", Bloque)) %>%
+                      mutate(Bloque= sub("Unidad Ciudadana", "UC", Bloque)) %>%
+                      mutate(Bloque= sub("Vamos Juntos", "VJ", Bloque)) %>%
+                      mutate(Bloque = sub("Evolución", "Evol", Bloque)) %>%
+                      mutate(Bloque = sub("Frente de Izquierda y de los Trabajadores", "FIT", Bloque)) %>%
+                      mutate(Bloque = sub("Mejor Ciudad", "MC", Bloque)) %>%
+                      mutate(Bloque = sub("Partido Socialista", "PS", Bloque)) %>%
+                      mutate(Bloque = sub("PTS Frente de Izquierda", "PTS", Bloque))
+
+
+ 
+# Hacemos el diagrama
+#chordDiagram(as.data.frame(discurso_circulo2), transparency = 0.5)
+
+chordDiagram(discurso_circulo2, transparency = 0.5)
+
+#SEPARADOS PARA QUE SE NOTE MAS
+
+circos.par(gap.after = c(rep(5, length(unique(discurso_circulo2[[1]]))-1), 15,
+                         rep(5, length(unique(discurso_circulo2[[2]]))-1), 15))
+chordDiagram(discurso_circulo2)
+
+#Cambiamos los colores
+
+circos.par = c(VJ = "gold", UC = "cyan3", BP = "dodgerblue4", GEN = "aquamarine3", FIT = "firebrick2", Evol= "violet", PS= "darksalmon", PTS = "brown4", MC= "darkgreen", AyL = "magenta3")
+chordDiagram(discurso_circulo2, circos.par, transparency = 0.4)
+circos.clear()
+```
+
+#Categorias 
+
+Armamos 3 dimensiones (persona, infraestructura y urbanismo) para armar dos dimensiones diferentes, una en el eje y y otra en el x. Así podremos ver cÃ³mo se distribuyen los discursos de acuerdo a quiÃ©n habla mÃ¡s sobre personas o sobre cuestiones edilicias.
+
+```{r}
+
+discurso_legis_dimension <- select(discurso_tokenizado,word, Legislador, Bloque)
+
+discurso_legis_dimension <- discurso_legis_dimension %>%
+  mutate(word = sub("vecinos", "Personas", word)) %>%
+  mutate(word = sub("vecino", "Personas", word)) %>%
+ mutate(word= sub("vecinas", "Personas", word)) %>%
+  mutate(word= sub("vecina", "Personas", word)) %>%
+  mutate(word= sub("personas", "Personas", word)) %>%
+  mutate(word= sub("persona", "Personas", word)) %>%
+  mutate(word= sub("ciudadanos", "Personas", word)) %>%
+  mutate(word= sub("ciudadano", "Personas", word)) %>%
+  mutate(word= sub("vecino", "Personas", word)) %>%
+  mutate(word= sub("ciudadanas", "Personas", word)) %>%
+mutate(word= sub("ciudadana", "Personas", word)) %>%
+mutate(word= sub("gente", "Personas", word)) %>%
+mutate(word= sub("niños", "Personas", word)) %>%
+  mutate(word= sub("niñas", "Personas", word)) %>%
+  mutate(word= sub("adolescentes", "Personas", word)) %>%
+  mutate(word= sub("niñez", "Personas", word)) %>%
+  mutate(word= sub("abuelos", "Personas", word)) %>%
+  mutate(word= sub("migrante", "Personas", word)) %>%
+  mutate(word= sub("discapacitados", "Personas", word)) %>%
+  mutate(word= sub("población", "Personas", word)) %>%
+  mutate(word= sub("comunidad", "Personas", word))%>%
+  mutate(word= sub("habitantes", "Personas", word))%>%
+  mutate(word= sub("habitante", "Personas", word))%>%
+   mutate(word = sub("metros", "Urbanismo", word)) %>%
+  mutate(word = sub("edificación", "Urbanismo", word)) %>%
+  mutate(word = sub("edificaciones", "Urbanismo", word)) %>%
+  mutate(word = sub("urbanístico", "Urbanismo", word)) %>%
+  mutate(word = sub("urbanístico", "Urbanismo", word)) %>%
+  mutate(word = sub("urbanística", "Urbanismo", word)) %>%
+  mutate(word = sub("urbana", "Urbanismo", word)) %>%
+  mutate(word = sub("reurbanizaciones", "Urbanismo", word)) %>%
+  mutate(word = sub("urbanización", "Urbanismo", word)) %>%
+  mutate(word = sub("urbanísticos", "Urbanismo", word)) %>%
+  mutate(word = sub("urbanos", "Urbanismo", word)) %>%
+  mutate(word = sub("construcción", "Urbanismo", word)) %>%
+  mutate(word = sub("construcciones", "Urbanismo", word)) %>%
+  mutate(word = sub("construir", "Urbanismo", word)) %>%
+  mutate(word = sub("construido", "Urbanismo", word)) %>%
+  mutate(word = sub("urbanísticos", "Urbanismo", word)) %>%
+  mutate(word = sub("edificación", "Urbanismo", word)) %>%
+  mutate(word = sub("edificabilidad", "Urbanismo", word)) %>%
+  mutate(word = sub("edificio", "Urbanismo", word)) %>%
+  mutate(word = sub("edificar", "Urbanismo", word)) %>%
+  mutate(word = sub("edificios", "Urbanismo", word)) %>%
+  mutate(word = sub("edificabilidades", "Urbanismo", word)) %>%
+  mutate(word = sub("villa", "Urbanismo", word)) %>%
+  mutate(word = sub("villas", "Urbanismo", word)) %>%
+  mutate(word = sub("barrio", "Urbanismo", word)) %>%
+  mutate(word = sub("barrios", "Urbanismo", word)) %>%
+  mutate(word = sub("traza", "Urbanismo", word)) %>%
+  mutate(word = sub("trazado", "Urbanismo", word)) %>%
+  mutate(word = sub("arquitecónicas", "Urbanismo", word)) %>%
+  mutate(word = sub("arquitectos", "Urbanismo", word)) %>%
+  mutate(word = sub("arquitecto", "Urbanismo", word)) %>%
+  mutate(word = sub("arquitectura", "Urbanismo", word)) %>%
+  mutate(word = sub("parque", "Urbanismo", word)) %>%
+  mutate(word = sub("arquitectónica", "Urbanismo", word)) %>%
+  mutate(word = sub("vivienda", "Urbanismo", word)) %>%
+  mutate(word = sub("viviendas", "Urbanismo", word)) %>%
+  mutate(word = sub("comercio", "Urbanismo", word)) %>%
+  mutate(word = sub("arquitectónicos", "Urbanismo", word)) %>%
+  mutate(word = sub("aeroparque", "Urbanismo", word)) %>%
+  mutate(word = sub("casa", "Urbanismo", word)) %>%
+  mutate(word = sub("casas", "Urbanismo", word)) %>%
+  mutate(word = sub("altura", "Urbanismo", word)) %>%
+  mutate(word = sub("alturas", "Urbanismo", word)) %>%
+  mutate(word = sub("espacios", "Urbanismo", word)) %>%
+  mutate(word = sub("espacio", "Urbanismo", word)) %>%
+  mutate(word = sub("residencia", "Urbanismo", word)) %>%
+  mutate(word = sub("residenciales", "Urbanismo", word)) %>%
+  mutate(word = sub("residenciales", "Urbanismo", word)) %>%
+mutate(word = sub("residencial", "Urbanismo", word)) %>%
+  mutate(word = sub("residuos", "Urbanismo", word)) %>%
+  mutate(word = sub("plaza", "Urbanismo", word)) %>%
+  mutate(word = sub("plazas", "Urbanismo", word)) %>%
+  mutate(word = sub("accesible", "Urbanismo", word)) %>%
+  mutate(word = sub("accesibles", "Urbanismo", word)) %>%
+  mutate(word = sub("accesibilidad", "Urbanismo", word)) %>%
+  mutate(word = sub("zonas", "Urbanismo", word)) %>%
+  mutate(word = sub("zona", "Urbanismo", word)) %>%
+    mutate(word = sub("zonificacón", "Urbanismo", word)) %>%
+    mutate(word = sub("zonificaciones", "Urbanismo", word)) %>%
+    mutate(word = sub("vivible", "Urbanismo", word)) %>%
+    mutate(word = sub("ventilación", "Urbanismo", word)) %>%
+    mutate(word = sub("vender", "Urbanismo", word)) %>%
+    mutate(word = sub("valorización", "Urbanismo", word)) %>%  
+  mutate(word = sub("transporte", "Urbanismo", word)) %>%
+  mutate(word = sub("transportes", "Urbanismo", word)) %>%
+  mutate(word = sub("torres", "Urbanismo", word)) %>%
+  mutate(word = sub("torre", "Urbanismo", word)) %>%
+  mutate(word = sub("suelo", "Urbanismo", word)) %>%
+  mutate(word = sub("suelos", "Urbanismo", word)) %>%
+  mutate(word = sub("vereda", "Urbanismo", word)) %>%
+  mutate(word = sub("veredas", "Urbanismo", word)) %>%
+  mutate(word = sub("avenida", "Urbanismo", word)) %>%
+  mutate(word = sub("calle", "Urbanismo", word)) %>%
+  mutate(word = sub("calles", "Urbanismo", word)) %>%
+  mutate(word = sub("avenidas", "Urbanismo", word)) %>%
+  mutate(word = sub("estructura", "Urbanismo", word)) %>%
+  mutate(word = sub("infraestructuras", "Urbanismo", word)) %>%
+  mutate(word = sub("zoning", "Urbanismo", word)) %>%
+  mutate(word = sub("infraestructura", "Urbanismo", word)) %>%
+  mutate(word = sub("códigos", "Urbanismo", word)) %>%
+  mutate(word = sub("tendencias", "Urbanismo", word))%>%
+  mutate(word = sub("planificador", "Urbanismo", word))%>%
+  mutate(word = sub("planificación", "Urbanismo", word))%>%
+  mutate(word = sub("planificar", "Urbanismo", word))%>%
+  mutate(word = sub("obra", "Urbanismo", word))%>%
+  mutate(word = sub("obras", "Urbanismo", word))%>%
+  mutate(word = sub("construye", "Urbanismo", word))%>%
+  mutate(word = sub("habitabilidad", "Urbanismo", word))%>%
+  mutate(word = sub("construyó", "Urbanismo", word))%>%
+  mutate(word = sub("densificaciÃ³n", "Urbanismo", word))%>%
+  mutate(word = sub("metropolitana", "Urbanismo", word))%>%
+  mutate(word = sub("metropolitano", "Urbanismo", word))%>%
+  mutate(word = sub("renovación", "Urbanismo", word))%>%
+  mutate(word = sub("hidráulico", "Urbanismo", word)) %>%
+  mutate(word = sub("proyecto", "Institucional", word)) %>%
+  mutate(word = sub("gestión", "Institucional", word)) %>%
+  mutate(word = sub("proyectos", "Institucional", word)) %>%
+ mutate(word= sub("ley", "Institucional", word)) %>%
+  mutate(word= sub("leyes", "Institucional", word)) %>%
+  mutate(word= sub("comisiÃ³n", "Institucional", word)) %>%
+  mutate(word= sub("gobierno", "Institucional", word)) %>%
+  mutate(word= sub("trabajo", "Institucional", word)) %>%
+  mutate(word= sub("diputados", "Institucional", word)) %>%
+  mutate(word= sub("diputado", "Institucional", word)) %>%
+  mutate(word= sub("diputada", "Institucional", word)) %>%
+mutate(word= sub("diputadas", "Institucional", word)) %>%
+mutate(word= sub("código", "Institucional", word)) %>%
+mutate(word= sub("códigos", "Institucional", word)) %>%
+  mutate(word= sub("plan", "Institucional", word)) %>%
+  mutate(word= sub("política", "Institucional", word)) %>%
+  mutate(word= sub("reunión", "Institucional", word)) %>%
+  mutate(word= sub("reuniones", "Institucional", word)) %>%
+  mutate(word= sub("participación", "Institucional", word)) %>%
+  mutate(word= sub("legislatura", "Institucional", word)) %>%
+  mutate(word= sub("debate", "Institucional", word)) %>%
+  mutate(word= sub("bloque", "Institucional", word))%>%
+  mutate(word= sub("discusión", "Institucional", word))%>%
+  mutate(word= sub("propuesta", "Institucional", word))%>%
+  mutate(word= sub("propuestas", "Institucional", word))%>%
+  mutate(word= sub("asesor", "Institucional", word))%>%
+  mutate(word= sub("asesores", "Institucional", word))%>%
+  mutate(word= sub("asesora", "Institucional", word))%>%
+  mutate(word= sub("asesoras", "Institucional", word))%>%
+  mutate(word= sub("oficialismo", "Institucional", word))%>%
+  mutate(word= sub("oposición", "Institucional", word))%>%
+  mutate(word= sub("normativa", "Institucional", word))%>%
+  mutate(word= sub("audiencia", "Institucional", word))%>%
+  mutate(word= sub("audiencias", "Institucional", word))
+
+
+
+#Filtramos por "Persona", "Institucional" y "Urbanismo"
+
+discurso_legis_dimension  <- filter(discurso_legis_dimension, word == "Personas" | word ==  "Urbanismo" | word == "Institucional") %>%  
+mutate(Legislador = sub("Marías, Diego", "Marías(VJ)", Legislador)) %>% 
+mutate(Legislador = sub("Quintana, Francisco", "Quintana(VJ)", Legislador )) %>% 
+mutate(Legislador = sub("Arce, Hernán", "Arce(PS)", Legislador )) %>% 
+mutate(Legislador = sub("Muiños, María Rosa", "Muiños(BP)", Legislador )) %>% 
+mutate(Legislador = sub("Vilardo, Fernando Pablo", "Vilardo(AyL)", Legislador )) %>% 
+mutate(Legislador = sub("Martinez, Marta Jacqueline", "Martinez(AyL)", Legislador)) %>% 
+mutate(Legislador = sub("Solano, Gabriel", "Solano(FIT)", Legislador)) %>% 
+mutate(Legislador = sub("Depierro, Marcelo Hugo", "Depierro(MC)", Legislador)) %>% 
+mutate(Legislador = sub("Ferrero, María Cecilia", "Ferrero(VJ)", Legislador)) %>%  
+mutate(Legislador = sub("Del Corro, Patricio", "Del Corro(PTS)", Legislador)) %>% 
+mutate(Legislador = sub("Tomada, Carlos Alfonso", "Tomada(UC)", Legislador)) %>% 
+mutate(Legislador = sub("Roldán Méndez, Victoria Inés", "Roldán Méndez(VJ)", Legislador)) %>% 
+mutate(Legislador = sub("Abrevaya, Sergio", "Abrevaya(GEN)", Legislador)) %>% 
+mutate(Legislador = sub("Gorbea, María Inés", "Gorbea(EVO)", Legislador)) %>% 
+mutate(Legislador = sub("Acevedo, José Luis", "Acevedo(VJ)", Legislador)) %>% 
+mutate(Legislador = sub("Penacca, Paula", "Penacca(UC)", Legislador))%>% 
+mutate(Legislador = sub("Cortina, Roy", "Cortina(PS)", Legislador))%>% 
+mutate(Legislador = sub("Andrade, Javier", "Andrade(UC)", Legislador))%>% 
+mutate(Legislador = sub("Reyes, HernÃ¡n", "Reyes(VJ)", Legislador))%>% 
+mutate(Legislador = sub("Ferraro, Maximiliano", "Ferraro(VJ)", Legislador))%>% 
+mutate(Legislador = sub("Conde, María Andrea", "Conde(UC)", Legislador))%>% 
+mutate(Legislador = sub("Bregman, Myriam", "Bregman(PTS)", Legislador))%>% 
+mutate(Legislador = sub("Forchieri, Agustín", "Forchieri(VJ)", Legislador))%>% 
+mutate(Legislador = sub("Sahonero, Gabriel Maximiliano", "Sahonero(VJ)", Legislador))%>% 
+mutate(Legislador = sub("Nosiglia, Juan Francisco", "Nosiglia(EVO)", Legislador)) %>% 
+mutate(Legislador = sub("García, Cristina", "García(VJ)", Legislador))
+
+discurso_legis_dimension <- discurso_legis_dimension %>%
+   mutate(Bloque = sub("Autodeterminación y Libertad", "AyL", Bloque)) %>%
+                      mutate(Bloque= sub("Bloque Peronista", "BP", Bloque)) %>%
+                      mutate(Bloque= sub("Unidad Ciudadana", "UC", Bloque)) %>%
+                      mutate(Bloque= sub("Vamos Juntos", "VJ", Bloque)) %>%
+                      mutate(Bloque = sub("Evolución", "Evol", Bloque)) %>%
+                      mutate(Bloque = sub("Frente de Izquierda y de los Trabajadores", "FIT", Bloque)) %>%
+                      mutate(Bloque = sub("Mejor Ciudad", "MC", Bloque)) %>%
+                      mutate(Bloque = sub("Partido Socialista", "PS", Bloque)) %>%
+                      mutate(Bloque = sub("PTS Frente de Izquierda", "PTS", Bloque))
+
+#Contamos cada una de las tres dimensiones por legislador
+
+Npersonas  <- group_by(discurso_legis_dimension, Legislador) %>% 
+filter(word == "Personas") %>% 
+count(Legislador)
+
+names(Npersonas)[names(Npersonas) == 'n'] <- 'Personas'
+
+Nurbanismo  <- group_by(discurso_legis_dimension, Legislador) %>% 
+filter(word == "Urbanismo") %>% 
+count(Legislador)
+
+names(Nurbanismo)[names(Nurbanismo) == 'n'] <- 'Urbanismo'
+
+Ninstitucional  <- group_by(discurso_legis_dimension, Legislador) %>% 
+filter(word == "Institucional") %>% 
+count(Legislador) 
+
+names(Ninstitucional)[names(Ninstitucional) == 'n'] <- 'Institucional'
+
+discurso3dim <- left_join(Nurbanismo, Ninstitucional)
+discurso3dim <- left_join(discurso3dim, Npersonas)
+
+#Tres dimensiones sin outlier 
+
+ggplot(discurso3dim, aes(x=Urbanismo, y=Institucional, fill=Personas)) +
+  geom_point() + 
+  geom_label(label=discurso3dim$Legislador, nudge_x = 0.80, nudge_y = 0.80, size=5) +
+  xlim(0, 120)+ylim(0, 120)+
+  scale_fill_distiller(palette = "Spectral")+
+  labs(title = "Dimensión Urbanismo vs Institucional - Sin outliers", 
+       subtitle = "El color representa la dimensión 'Personas'")
+
+
+```
+
+#Temas específicos 
+
+Hacemos una categoría de temas centrales para el proyecto de Código Urbano, según lo establecido en sus fundamentos. Hacemos esto para ver si fue mencionado por los/as Legisladores/as
+
+Armar las dimensiones. Designarle a cada Bloque las dimensiones. Hacer un grÃ¡fico de barras.
+
+Plan Urbano Ambiental postula que deben desarrollarse plenamente los siguientes rasgos:
+
+__CIUDAD INTEGRADA__. En cuanto a la vinculaciÃ³n de todas sus zonas entre sÃ??? y, en especial, de la zona sur con el resto de la ciudad, de la ciudad con los rÃ???os que la rodean y de la ciudad con el Conurbano con el que constituye una Ãrea Metropolitana. #2. CIUDAD POLICÃ‰NTRICA. En cuanto a consolidar la jerarquÃ???a de su gran Ãrea Central y, simultÃ¡neamente, promover una red de centros secundarios, asÃ??? como de centros comunales y barriales con identidad y pujanza propia.
+
+
+__CIUDAD PLURAL__. En cuanto a que sea un espacio de vida para todos los sectores sociales, ofreciendo en especial un hÃ¡bitat digno para los grupos de menor capacidad econÃ³mica, asÃ??? como un hÃ¡bitat accesible para las personas con capacidades diferenciales.
+
+__CIUDAD SALUDABLE__. En cuanto a las condiciones de habitabilidad que garanticen la calidad ambiental y la sostenibilidad, a partir del uso de tecnologÃ???as apropiadas en las actividades productivas y en los sistemas de transporte, de provisiÃ³n adecuada de infraestructura de saneamiento, de la prevenciÃ³n de inundaciones y de la resoluciÃ³n de la gestiÃ³n de los residuos.
+
+__CIUDAD DIVERSA__. En cuanto a mantener su pluralidad de actividades (residenciales, productivas, culturales) y su pluralidad de formas residenciales (distintas densidades, distintas morfologÃ???as), compatibilizando los requerimientos de calidad ambiental de cada una de ellas y enriqueciÃ©ndolas con su mutua convivencia.
+```{r}
+
+temas_especficos <- discurso_tokenizado  %>%
+  select(-n) %>% 
+  mutate(word = sub("Metropolitana", "Ciudad Integrada", word)) %>%
+  mutate(word = sub("Sur", "Ciudad Integrada", word)) %>%
+ mutate(word= sub("sur", "Ciudad Integrada", word)) %>%
+  mutate(word= sub("metropolitana", "Ciudad Integrada", word)) %>%
+  mutate(word= sub("metropolitano", "Ciudad Integrada", word)) %>%
+  mutate(word= sub("integraciÃ³n", "Ciudad Integrada", word)) %>%
+  mutate(word= sub("rÃ???o", "Ciudad Integrada", word)) %>%
+  mutate(word= sub("rÃ???os", "Ciudad Integrada", word)) %>%
+  mutate(word= sub("norte", "Ciudad Integrada", word)) %>%
+  mutate(word= sub("conurbano", "Ciudad Integrada", word)) %>%
+  mutate(word= sub("oeste", "Ciudad Integrada", word)) %>%
+  mutate(word = sub("centro", "Ciudad PolicÃ©ntrica", word)) %>%
+  mutate(word = sub("centros", "Ciudad PolicÃ©ntrica", word)) %>%
+ mutate(word= sub("policÃ©ntrica", "Ciudad PolicÃ©ntrica", word)) %>%
+  mutate(word= sub("descentralizar", "Ciudad PolicÃ©ntrica", word)) %>%
+  mutate(word= sub("descentralizaciÃ³n", "Ciudad PolicÃ©ntrica", word)) %>%
+  mutate(word= sub("secundarios", "Ciudad PolicÃ©ntrica", word)) %>%
+  mutate(word= sub("comunales", "Ciudad PolicÃ©ntrica", word)) %>%
+  mutate(word= sub("barriales", "Ciudad PolicÃ©ntrica", word)) %>%
+  mutate(word= sub("Ã¡rea", "Ciudad PolicÃ©ntrica", word)) %>%
+  mutate(word= sub("Ã¡reas", "Ciudad PolicÃ©ntrica", word)) %>%
+  mutate(word= sub("polos", "Ciudad PolicÃ©ntrica", word)) %>%
+  mutate(word= sub("zona", "Ciudad PolicÃ©ntrica", word))%>%
+  mutate(word= sub("zonas", "Ciudad PolicÃ©ntrica", word)) %>%
+  mutate(word = sub("sectores", "Ciudad Plural", word)) %>%
+  mutate(word = sub("pobres", "Ciudad Plural", word)) %>%
+ mutate(word= sub("pobreza", "Ciudad Plural", word)) %>%
+  mutate(word= sub("ricos", "Ciudad Plural", word)) %>%
+  mutate(word= sub("desigualdad", "Ciudad Plural", word)) %>%
+  mutate(word= sub("desigualdades", "Ciudad Plural", word)) %>%
+  mutate(word= sub("plural", "Ciudad Plural", word)) %>%
+  mutate(word= sub("pluralidad", "Ciudad Plural", word)) %>%
+  mutate(word= sub("pluralismo", "Ciudad Plural", word)) %>%
+  mutate(word = sub("ambiental", "Ciudad Saludable", word)) %>%
+  mutate(word = sub("ambientales", "Ciudad Saludable", word)) %>%
+ mutate(word= sub("ambientalista", "Ciudad Saludable", word)) %>%
+  mutate(word= sub("habitabilidad", "Ciudad Saludable", word)) %>%
+  mutate(word= sub("saneamiento", "Ciudad Saludable", word)) %>%
+  mutate(word= sub("sano", "Ciudad Saludable", word)) %>%
+  mutate(word= sub("contaminante", "Ciudad Saludable", word)) %>%
+  mutate(word= sub("contaminantes", "Ciudad Saludable", word))  %>%
+  mutate(word= sub("salud", "Ciudad Saludable", word)) %>%
+  mutate(word= sub("saludable", "Ciudad Saludable", word))%>%
+  mutate(word= sub("verdes", "Ciudad Saludable", word)) %>%
+  mutate(word= sub("verde", "Ciudad Saludable", word))%>%
+  mutate(word = sub("diversidad", "Ciudad Diversa", word)) %>%
+  mutate(word = sub("diverso", "Ciudad Diversa", word)) %>%
+ mutate(word= sub("diversa", "Ciudad Diversa", word)) %>%
+ mutate(word= sub("densidad", "Ciudad Diversa", word)) %>%
+mutate(word= sub("densificar", "Ciudad Diversa", word)) %>%
+mutate(word= sub("densificaciÃ³n", "Ciudad Diversa", word)) %>%
+mutate(word= sub("convivir", "Ciudad Diversa", word)) %>%
+mutate(word= sub("convivencia", "Ciudad Diversa", word))  
+ 
+temas_especficos <- filter(temas_especficos, word == "Ciudad Integrada" | word == "Ciudad PolicÃ©ntrica" | word == "Ciudad Plural" | word == "Ciudad Saludable" | word == "Ciudad Diversa") %>% 
+  count(word, Legislador) 
+
+ggplot(temas_especficos)+
+  geom_bar(aes(x= Legislador, weight=n, fill=word))+
+  coord_flip()+
+  labs(title = "Las 5 dimensiones de #Ciudad", 
+         subtitle = "Segun cada legislador",
+         x = "palabras",
+         y = "cantidad",
+         fill = "palabra")
+
+```
