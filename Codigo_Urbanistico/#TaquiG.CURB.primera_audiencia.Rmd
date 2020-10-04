@@ -18,8 +18,6 @@ library(tidytext)
 #Cargar los datos 
 ```{r}
 
-setwd("C:/Users/Manuel/Desktop/taquigraficos")
-
 taqui_urbanistico <- readxl::read_excel("Taquigrafica Codigo Urbanistico.xlsx")
 
 #Le agregamos un dataset que ya teniamos con datos de legislador y bloque. La ventaja de tenerlo aparte en que podemos usarlo en otro momento. Solo lo uni
